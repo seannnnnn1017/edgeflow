@@ -1,0 +1,7 @@
+.DS_Store
+*.app
+build/
+# early hand-made lab setup, superseded by the app
+legacy/
+lab_*.py
+lab_deskflow_start.sh
