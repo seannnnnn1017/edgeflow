@@ -12,6 +12,17 @@ Built on [Deskflow](https://github.com/deskflow/deskflow); Edgeflow adds the par
 - **剪貼簿 / Clipboard** — text and images both ways; Mac screenshots go straight to the clipboard.
 - **只在區網 / LAN only** — the computers talk directly over the local network, encrypted.
 
+## Download
+
+Get **Edgeflow-…-macOS-arm64.zip** from [Releases](https://github.com/seannnnnn1017/edgeflow/releases/latest), unzip it, and move **Edgeflow.app** to Applications.
+
+The app isn't notarized by Apple, so the first launch is blocked. Either:
+
+- open it once, then go to **System Settings → Privacy & Security** and click **Open Anyway**, or
+- run `xattr -dr com.apple.quarantine /Applications/Edgeflow.app` in Terminal.
+
+You don't download anything on the other computer: Edgeflow shows a command to paste there, or installs it for you over SSH.
+
 ## Requirements
 
 - Mac: macOS 14+, Apple silicon
@@ -21,10 +32,11 @@ Built on [Deskflow](https://github.com/deskflow/deskflow); Edgeflow adds the par
 ## Build
 
 ```sh
-./build.sh
+./build.sh              # build and install to /Applications
+./build.sh --release    # build and zip for a release
 ```
 
-Needs Xcode command-line tools and [Deskflow.app](https://github.com/deskflow/deskflow/releases) in `/Applications` (or set `DESKFLOW_APP`), which gets bundled into `Edgeflow.app`. The result is installed to `/Applications/Edgeflow.app`.
+Needs Xcode command-line tools and [Deskflow.app](https://github.com/deskflow/deskflow/releases) in `/Applications` (or set `DESKFLOW_APP`), which gets bundled into `Edgeflow.app`.
 
 The app is unsigned. To keep macOS's Accessibility permission across rebuilds, create a code-signing certificate named **Edgeflow Local Signing** in Keychain Access; `build.sh` uses it when present.
 

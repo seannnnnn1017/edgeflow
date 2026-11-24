@@ -1,6 +1,7 @@
 #!/bin/sh
 # Build Edgeflow.app and install it to /Applications.
 #   ./build.sh
+#   ./build.sh --release    build only and zip it for a GitHub release (no install)
 # The app bundles: Deskflow (its server core), the Mac edge effect, and the files it
 # serves to the other computer during pairing (app/Resources/payload).
 set -e
@@ -62,6 +63,14 @@ ID=$(security find-identity -p codesigning 2>/dev/null | awk '/"Edgeflow Local S
 codesign --force --sign "${ID:--}" "$APP/Contents/Resources/edge-fx"
 codesign --force --sign "${ID:--}" "$APP"
 codesign -dv "$APP" 2>&1 | grep -E "^Authority|Signature=adhoc" | head -1
+if [ "${1:-}" = "--release" ]; then
+  VER=$(/usr/libexec/PlistBuddy -c "Print CFBundleShortVersionString" "$APP/Contents/Info.plist")
+  ZIP="$BUILD/Edgeflow-$VER-macOS-arm64.zip"
+  rm -f "$ZIP"
+  ditto -c -k --sequesterRsrc --keepParent "$APP" "$ZIP"
+  echo "✓ $ZIP"
+  exit 0
+fi
 rm -rf /Applications/Edgeflow.app
 cp -R "$APP" /Applications/
 echo "✓ /Applications/Edgeflow.app"
