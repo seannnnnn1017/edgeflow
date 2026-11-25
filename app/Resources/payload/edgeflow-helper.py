@@ -24,7 +24,7 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
-VERSION = "1.0.0"
+VERSION = "1.1.0"
 DIR = Path(__file__).resolve().parent
 DEVICE = json.loads((DIR / "device.json").read_text())
 CONFIG = DIR / "config.json"
@@ -196,7 +196,8 @@ def poll_loop():
         try:
             active = "1" if STATE.exists() else "0"
             data = json.loads(fetch(signed(f"/c/{DEVICE['deviceId']}",
-                                           {"v": VERSION, "cv": cfg.get("cv", ""), "active": active})))
+                                           {"v": VERSION, "cv": cfg.get("cv", ""), "active": active,
+                                            "mon": screens["mon"]})))
             for wav, want in data.get("files", {}).items():
                 if sha(DIR / wav) != want:
                     try:   # one failed sound must not hold up the settings
@@ -220,8 +221,23 @@ def poll_loop():
         time.sleep(3)
 
 
+screens = {"mon": ""}
+
+
+def read_monitors():
+    """"x,y,w,h,primary;…" in device pixels, so the Mac can draw these screens and line them up."""
+    d = Gdk.Display.get_default()
+    out = []
+    for i in range(d.get_n_monitors()):
+        m = d.get_monitor(i)
+        g, f = m.get_geometry(), m.get_scale_factor()
+        out.append(f"{g.x * f},{g.y * f},{g.width * f},{g.height * f},{int(m.is_primary())}")
+    screens["mon"] = ";".join(out)
+
+
 def supervise():
-    """Keep Deskflow running (or stopped while paused)."""
+    """Keep Deskflow running (or stopped while paused); refresh the screen layout."""
+    read_monitors()
     if cfg.get("paused"):
         if deskflow_running():
             stop_deskflow()
@@ -252,6 +268,11 @@ def play_charge():
 
 def at_edge(x, y, mon):
     edge = cfg.get("edge", "bottom")
+    # only the part of the edge that leads to the Mac (several screens: see the Mac's layout)
+    scr = Gdk.Screen.get_default()
+    f = x / max(1, scr.get_width()) if edge in ("top", "bottom") else y / max(1, scr.get_height())
+    if not float(cfg.get("edgeLo", 0)) - 0.002 <= f <= float(cfg.get("edgeHi", 1)) + 0.002:
+        return False
     return {"bottom": y >= mon.y + mon.height - 1 - TOL, "top": y <= mon.y + TOL,
             "left": x <= mon.x + TOL, "right": x >= mon.x + mon.width - 1 - TOL}.get(edge, False)
 
@@ -304,6 +325,7 @@ def on_owner_change(_clip, _event):
 
 
 CLIP.connect("owner-change", on_owner_change)
+read_monitors()
 threading.Thread(target=poll_loop, daemon=True).start()
 start_deskflow()
 GLib.timeout_add(16, charge_tick)

@@ -292,6 +292,11 @@ final class Engine: ObservableObject {
         change(&config.computers[i])
     }
 
+    /// Slide the Mac along a multi-screen computer's edge (see Computer.edgeRange).
+    func setEdgeStart(_ id: String, _ start: Double) {
+        update(id) { $0.edgeStart = start }
+    }
+
     /// Put a computer on a side; whoever was there swaps to the old spot.
     func place(_ id: String, _ side: Side) {
         guard let i = config.computers.firstIndex(where: { $0.id == id }) else { return }
@@ -474,6 +479,7 @@ final class Engine: ObservableObject {
             live[id] = DeviceLive(lastSeen: Date(), helperVersion: r.query["v"] ?? "", configVersion: r.query["cv"] ?? "", ip: r.remoteIP)
             if c.ip != r.remoteIP && !r.remoteIP.isEmpty { update(id) { $0.ip = r.remoteIP } }
             if let v = r.query["v"], c.helperVersion != v { update(id) { $0.helperVersion = v } }
+            if let m = r.query["mon"].flatMap(Monitor.parse), c.monitors != m { update(id) { $0.monitors = m } }
             out = config.deviceConfig(for: c, serverIP: macIP, wavHashes: wavHashes)
             out["cv"] = configVersion
             out["commands"] = commands[id] ?? []

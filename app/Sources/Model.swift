@@ -26,10 +26,67 @@ struct Computer: Codable, Identifiable, Equatable {
     var helperVersion: String? = nil
     var lastSeen: Date? = nil
     var ssh: Bool = false
+    var monitors: [Monitor]? = nil  // its screens, as its helper reports them
+    var edgeStart: Double? = nil    // where the Mac's edge starts along its edge (0–1), see edgeRange
 
     var isWindows: Bool { os == "windows" }
     var sfIcon: String { ["laptop": "laptopcomputer", "server": "server.rack"][icon] ?? "desktopcomputer" }
     var osShort: String { isWindows ? "Windows" : "Linux" }
+}
+
+/// One screen of another computer, in its own desktop pixels.
+struct Monitor: Codable, Equatable {
+    var x, y, w, h: Double
+    var primary: Bool
+
+    /// "x,y,w,h,primary;…" from the helper.
+    static func parse(_ s: String) -> [Monitor]? {
+        let list = s.split(separator: ";").compactMap { part -> Monitor? in
+            let v = part.split(separator: ",").compactMap { Double($0) }
+            guard v.count == 5, v[2] > 0, v[3] > 0 else { return nil }
+            return Monitor(x: v[0], y: v[1], w: v[2], h: v[3], primary: v[4] != 0)
+        }
+        return list.isEmpty ? nil : list
+    }
+}
+
+extension Computer {
+    /// Top/bottom neighbours share a horizontal edge, left/right a vertical one.
+    var horizontalEdge: Bool { side == .top || side == .bottom }
+    var screens: [Monitor] { monitors ?? [] }
+    var primaryScreen: Monitor? { screens.first(where: \.primary) ?? screens.first }
+
+    /// The span of this computer's desktop along the shared edge (pixels).
+    var edgeSpan: (lo: Double, hi: Double)? {
+        guard screens.count > 1 else { return nil }
+        let lo = screens.map { horizontalEdge ? $0.x : $0.y }.min()!
+        let hi = screens.map { horizontalEdge ? $0.x + $0.w : $0.y + $0.h }.max()!
+        return (lo, hi)
+    }
+
+    /// Fractions of its edge the Mac's whole edge leads to. With several screens side by side
+    /// the Mac lines up with one screen's width (the main one by default) and can slide along;
+    /// nil means edge to edge, as with a single screen.
+    var edgeRange: (Double, Double)? {
+        guard let span = edgeSpan, let p = primaryScreen else { return nil }
+        let total = span.hi - span.lo
+        let len = (horizontalEdge ? p.w : p.h) / total
+        guard len < 0.999 else { return nil }
+        let def = ((horizontalEdge ? p.x : p.y) - span.lo) / total
+        let start = min(max(edgeStart ?? def, 0), 1 - len)
+        return (start, start + len)
+    }
+
+    /// Start positions worth snapping to: each screen's start, and its end lined up.
+    var edgeSnaps: [Double] {
+        guard let span = edgeSpan, let r = edgeRange else { return [] }
+        let total = span.hi - span.lo, len = r.1 - r.0
+        return screens.flatMap { m -> [Double] in
+            let a = ((horizontalEdge ? m.x : m.y) - span.lo) / total
+            let b = ((horizontalEdge ? m.x + m.w : m.y + m.h) - span.lo) / total
+            return [a, b - len]
+        }.filter { $0 >= -0.0001 && $0 <= 1 - len + 0.0001 }
+    }
 }
 
 struct FXConfig: Codable, Equatable {
@@ -83,6 +140,7 @@ struct FXConfig: Codable, Equatable {
             "edge": c.side.opposite.rawValue, "keys": keys(for: c), "ime": ime,
             "screen": c.screen, "server": serverIP, "serverHost": Env.macHost,
             // only the sounds the other computer plays (return.wav is the Mac's own)
+            "edgeLo": c.edgeRange?.0 ?? 0, "edgeHi": c.edgeRange?.1 ?? 1,
             "paused": paused, "files": wavHashes.filter { ["enter.wav", "charge.wav"].contains($0.key) },
             "helperLatest": Env.version,
         ]

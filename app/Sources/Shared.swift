@@ -59,11 +59,91 @@ struct LayoutMap: View {
         slotCenter.min { hypot($0.value.x - p.x, $0.value.y - p.y) < hypot($1.value.x - p.x, $1.value.y - p.y) }!.key
     }
 
+    /// A screen group dragged well away from the Mac moves to another side instead of sliding.
+    private func pulledOff(_ c: Computer) -> Bool {
+        abs(c.horizontalEdge ? dragOffset.height : dragOffset.width) > 50
+    }
+
+    private func dot(_ c: Computer) -> Color { engine.isOnline(c) ? DotColor.green : DotColor.grey }
+
+    private func endDrag(_ c: Computer, _ g: DragGesture.Value, slide: Double? = nil) {
+        let center = slotCenter[c.side]!
+        if hypot(g.translation.width, g.translation.height) < 4 {
+            onTap?(c)
+        } else if let slide, !pulledOff(c) {
+            withAnimation(.spring(duration: 0.3)) { engine.setEdgeStart(c.id, slide) }
+        } else {
+            let s = nearest(CGPoint(x: center.x + g.translation.width, y: center.y + g.translation.height))
+            withAnimation(.spring(duration: 0.3)) { engine.place(c.id, s) }
+        }
+        dragId = nil; dragOffset = .zero
+    }
+
+    @ViewBuilder private func singleTile(_ c: Computer) -> some View {
+        let center = slotCenter[c.side]!
+        let dragging = dragId == c.id
+        ComputerTile(c: c, dot: dot(c), active: dragging)
+            .offset(x: center.x - 52 + (dragging ? dragOffset.width : 0), y: center.y - 28 + (dragging ? dragOffset.height : 0))
+            .zIndex(dragging ? 2 : 1)
+            .gesture(DragGesture(minimumDistance: 0)
+                .onChanged { g in dragId = c.id; dragOffset = g.translation }
+                .onEnded { g in endDrag(c, g) })
+            .animation(.spring(duration: 0.3), value: c.side)
+    }
+
+    /// A computer with several screens along the shared edge: its real screen layout, the part
+    /// of its edge that meets the Mac lit up. Drag along the edge to slide it, away to move it.
+    @ViewBuilder private func screenGroup(_ c: Computer, _ g: ScreenGroupGeo) -> some View {
+        let dragging = dragId == c.id
+        let slideBy = dragging && !pulledOff(c) ? (c.horizontalEdge ? dragOffset.width : dragOffset.height) : 0
+        let start = g.start(sliding: slideBy)
+        let cross = dragging && pulledOff(c) ? dragOffset : .zero
+        ZStack(alignment: .topLeading) {
+            ForEach(Array(c.screens.enumerated()), id: \.offset) { i, m in
+                let r = g.rect(m, start: start)
+                ZStack {
+                    RoundedRectangle(cornerRadius: 6).fill(pal.tile)
+                    RoundedRectangle(cornerRadius: 6).strokeBorder(dragging ? ac : pal.line, lineWidth: dragging ? 1.5 : 1)
+                    Text("\(i + 1)").font(.system(size: 10, weight: .semibold)).foregroundStyle(pal.mut)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading).padding(5)
+                }
+                .frame(width: r.width, height: r.height)
+                .offset(x: r.minX, y: r.minY)
+            }
+            // the part of its edge the Mac leads to
+            let bar = g.linkBar(start: start)
+            RoundedRectangle(cornerRadius: 1.5).fill(ac).frame(width: bar.width, height: bar.height)
+                .shadow(color: ac.opacity(0.8), radius: 4).offset(x: bar.minX, y: bar.minY)
+            let label = g.labelCenter(start: start)
+            HStack(spacing: 5) {
+                Image(systemName: c.sfIcon).font(.system(size: 12))
+                Text(c.name).font(.system(size: 11.5, weight: .semibold)).lineLimit(1)
+                Circle().fill(dot(c)).frame(width: 6, height: 6)
+            }
+            .fixedSize()
+            .padding(.horizontal, 7).padding(.vertical, 3)
+            .background(Capsule().fill(pal.card.opacity(0.92)))
+            .frame(width: 160, height: 22)
+            .offset(x: label.x - 80, y: label.y - 11)
+        }
+        .shadow(color: .black.opacity(dragging ? 0.35 : 0.12), radius: dragging ? 10 : 3, y: dragging ? 6 : 1)
+        .offset(cross)
+        .zIndex(dragging ? 2 : 1)
+        .gesture(DragGesture(minimumDistance: 0, coordinateSpace: .global)
+            .onChanged { v in dragId = c.id; dragOffset = v.translation }
+            .onEnded { v in
+                let s = g.start(sliding: c.horizontalEdge ? v.translation.width : v.translation.height)
+                endDrag(c, v, slide: s)
+            })
+        .animation(.spring(duration: 0.3), value: c.side)
+        .animation(.spring(duration: 0.3), value: c.edgeStart)
+    }
+
     var body: some View {
         ZStack(alignment: .topLeading) {
             RoundedRectangle(cornerRadius: 12).fill(pal.field)
             DotGrid()
-            if let id = dragId, let c = engine.computer(id) {
+            if let id = dragId, let c = engine.computer(id), ScreenGroupGeo(c) == nil || pulledOff(c) {
                 let target = nearest(CGPoint(x: slotCenter[c.side]!.x + dragOffset.width, y: slotCenter[c.side]!.y + dragOffset.height))
                 ForEach(Side.allCases, id: \.self) { s in
                     RoundedRectangle(cornerRadius: 10)
@@ -84,28 +164,91 @@ struct LayoutMap: View {
             .offset(x: 140, y: 77)
 
             ForEach(engine.config.computers) { c in
-                let center = slotCenter[c.side]!
-                let dragging = dragId == c.id
-                ComputerTile(c: c, dot: engine.isOnline(c) ? DotColor.green : DotColor.grey, active: dragging)
-                    .offset(x: center.x - 52 + (dragging ? dragOffset.width : 0), y: center.y - 28 + (dragging ? dragOffset.height : 0))
-                    .zIndex(dragging ? 2 : 1)
-                    .gesture(DragGesture(minimumDistance: 0)
-                        .onChanged { g in dragId = c.id; dragOffset = g.translation }
-                        .onEnded { g in
-                            if hypot(g.translation.width, g.translation.height) < 4 {
-                                onTap?(c)
-                            } else {
-                                let s = nearest(CGPoint(x: center.x + g.translation.width, y: center.y + g.translation.height))
-                                withAnimation(.spring(duration: 0.3)) { engine.place(c.id, s) }
-                            }
-                            dragId = nil; dragOffset = .zero
-                        })
-                    .animation(.spring(duration: 0.3), value: c.side)
+                if let g = ScreenGroupGeo(c) {
+                    screenGroup(c, g)
+                } else {
+                    singleTile(c)
+                }
             }
         }
         .frame(width: 400, height: 230)
         .clipShape(RoundedRectangle(cornerRadius: 12))
         .frame(maxWidth: .infinity)
+    }
+}
+
+/// Where a multi-screen computer's screens go on the 400×230 map. The Mac tile is
+/// x 140–260, y 77–153; the screens sit beside it on their side, scaled so the main screen
+/// is as long as the Mac's edge (smaller if they wouldn't fit), and shifted along the edge
+/// so the part linked to the Mac sits right against it.
+struct ScreenGroupGeo {
+    let c: Computer
+    let lo: Double, total: Double, range: (Double, Double)
+    let scale: Double
+    let minX, minY, maxX, maxY: Double
+
+    static let mac = CGRect(x: 140, y: 77, width: 120, height: 76)
+
+    init?(_ c: Computer) {
+        guard let span = c.edgeSpan, let range = c.edgeRange, let p = c.primaryScreen else { return nil }
+        self.c = c; lo = span.lo; total = span.hi - span.lo; self.range = range
+        minX = c.screens.map(\.x).min()!; minY = c.screens.map(\.y).min()!
+        maxX = c.screens.map { $0.x + $0.w }.max()!; maxY = c.screens.map { $0.y + $0.h }.max()!
+        let m = Self.mac
+        let h = c.horizontalEdge
+        let macLen = h ? m.width : m.height
+        let crossRoom: Double = h ? 64 : 126            // between the Mac and the map's edge
+        let axisRoom: Double = h ? 392 : 222
+        scale = min(macLen / (h ? p.w : p.h), crossRoom / (h ? maxY - minY : maxX - minX),
+                    axisRoom / (h ? maxX - minX : maxY - minY))
+    }
+
+    /// The edge start after sliding the screens by `by` map points (snapped to screen edges).
+    func start(sliding by: Double) -> Double {
+        let len = range.1 - range.0
+        var s = range.0 - by / scale / total
+        s = min(max(s, 0), 1 - len)
+        if let snap = c.edgeSnaps.min(by: { abs($0 - s) < abs($1 - s) }), abs(snap - s) < 0.04 { s = snap }
+        return s
+    }
+
+    /// Map position of a desktop pixel coordinate along the edge, for a given start.
+    private func axis(_ px: Double, start: Double) -> Double {
+        let m = Self.mac
+        let macMid = c.horizontalEdge ? m.midX : m.midY
+        let linkMid = lo + (start + (range.1 - range.0) / 2) * total
+        return macMid + (px - linkMid) * scale
+    }
+
+    func rect(_ s: Monitor, start: Double) -> CGRect {
+        let m = Self.mac, gap = 6.0
+        if c.horizontalEdge {
+            let x = axis(s.x, start: start), w = s.w * scale, h = s.h * scale
+            let y = c.side == .top ? m.minY - gap - (maxY - s.y) * scale : m.maxY + gap + (s.y - minY) * scale
+            return CGRect(x: x, y: y, width: w, height: h)
+        } else {
+            let y = axis(s.y, start: start), w = s.w * scale, h = s.h * scale
+            let x = c.side == .left ? m.minX - gap - (maxX - s.x) * scale : m.maxX + gap + (s.x - minX) * scale
+            return CGRect(x: x, y: y, width: w, height: h)
+        }
+    }
+
+    /// The lit strip on the screens' edge facing the Mac.
+    func linkBar(start: Double) -> CGRect {
+        let m = Self.mac, gap = 6.0
+        let a = axis(lo + start * total, start: start), b = axis(lo + (start + range.1 - range.0) * total, start: start)
+        switch c.side {
+        case .top: return CGRect(x: a, y: m.minY - gap - 1.5, width: b - a, height: 3)
+        case .bottom: return CGRect(x: a, y: m.maxY + gap - 1.5, width: b - a, height: 3)
+        case .left: return CGRect(x: m.minX - gap - 1.5, y: a, width: 3, height: b - a)
+        case .right: return CGRect(x: m.maxX + gap - 1.5, y: a, width: 3, height: b - a)
+        }
+    }
+
+    /// Name label: in the middle of the screens, across from the Mac.
+    func labelCenter(start: Double) -> CGPoint {
+        let r = c.screens.map { rect($0, start: start) }.reduce(CGRect.null) { $0.union($1) }
+        return CGPoint(x: c.horizontalEdge ? Self.mac.midX : r.midX, y: c.horizontalEdge ? r.midY : Self.mac.midY)
     }
 }
 

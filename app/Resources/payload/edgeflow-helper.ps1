@@ -31,7 +31,7 @@ using System.Windows.Forms;
 
 public static class EF
 {
-    public const string Version = "1.0.0";
+    public const string Version = "1.1.0";
     static string Dir, CoreExe, CoreDir, ConfPath, LogPath;
     static Dictionary<string, object> Dev;
     static Dictionary<string, object> Cfg = new Dictionary<string, object>();
@@ -197,7 +197,12 @@ public static class EF
     static bool AtEdge(Point p)
     {
         var b = Screen.FromPoint(p).Bounds;
-        switch (S("edge", "bottom"))
+        // only the part of the edge that leads to the Mac (several screens: see the Mac's layout)
+        var v = SystemInformation.VirtualScreen;
+        string edge = S("edge", "bottom");
+        double f = (edge == "top" || edge == "bottom") ? (p.X - v.Left) / (double)v.Width : (p.Y - v.Top) / (double)v.Height;
+        if (f < D("edgeLo", 0) - 0.002 || f > D("edgeHi", 1) + 0.002) return false;
+        switch (edge)
         {
             case "top": return p.Y <= b.Top + 1;
             case "left": return p.X <= b.Left + 1;
@@ -272,13 +277,22 @@ public static class EF
         throw last;
     }
 
+    // "x,y,w,h,primary;…" so the Mac can draw this computer's screens and line them up
+    static string Monitors()
+    {
+        var parts = new List<string>();
+        foreach (var s in Screen.AllScreens)
+            parts.Add(s.Bounds.X + "," + s.Bounds.Y + "," + s.Bounds.Width + "," + s.Bounds.Height + "," + (s.Primary ? "1" : "0"));
+        return string.Join(";", parts.ToArray());
+    }
+
     static void PollLoop()
     {
         while (true)
         {
             try
             {
-                string extra = "&v=" + Version + "&cv=" + Uri.EscapeDataString(S("cv", "")) + "&active=" + (Active ? "1" : "0");
+                string extra = "&v=" + Version + "&cv=" + Uri.EscapeDataString(S("cv", "")) + "&active=" + (Active ? "1" : "0") + "&mon=" + Uri.EscapeDataString(Monitors());
                 var data = Json.Deserialize<Dictionary<string, object>>(Encoding.UTF8.GetString(Fetch(Signed("/c/" + DevS("deviceId"), extra), 6000)));
                 bool sounds = false;
                 var files = data.ContainsKey("files") ? data["files"] as Dictionary<string, object> : null;

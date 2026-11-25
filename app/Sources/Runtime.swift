@@ -42,8 +42,13 @@ enum DeskflowConf {
 
         // 2. layout: each computer on its side of the Mac
         var links = "section: options\nend\n\nsection: links\n\t\(mac):\n"
-        for c in cfg.computers { links += "\t\t\(c.side.deskflow) = \(c.screen)\n" }
-        for c in cfg.computers { links += "\t\(c.screen):\n\t\t\(c.side.opposite.deskflow) = \(mac)\n" }
+        // with several screens over there, the Mac's whole edge meets just part of theirs
+        func pct(_ r: (Double, Double)?) -> String {
+            guard let r else { return "" }
+            return String(format: "(%.2f,%.2f)", r.0 * 100, r.1 * 100)
+        }
+        for c in cfg.computers { links += "\t\t\(c.side.deskflow) = \(c.screen)\(pct(c.edgeRange))\n" }
+        for c in cfg.computers { links += "\t\(c.screen):\n\t\t\(c.side.opposite.deskflow)\(pct(c.edgeRange)) = \(mac)\n" }
         links += "end\n"
         if links != (try? String(contentsOf: Env.serverConf, encoding: .utf8)) {
             try? links.write(to: Env.serverConf, atomically: true, encoding: .utf8); changed = true
