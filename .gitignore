@@ -5,3 +5,4 @@ build/
 legacy/
 lab_*.py
 lab_deskflow_start.sh
+__pycache__/
