@@ -24,7 +24,7 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
-VERSION = "1.1.0"
+VERSION = "1.2.2"
 DIR = Path(__file__).resolve().parent
 DEVICE = json.loads((DIR / "device.json").read_text())
 CONFIG = DIR / "config.json"
@@ -247,7 +247,7 @@ def supervise():
 
 
 # ---- charge sound --------------------------------------------------------------------
-st = {"since": None, "armed": False, "proc": None, "state_mtime": None}
+st = {"since": None, "armed": False, "proc": None, "state_mtime": None, "spent": False}
 TOL = 2
 
 
@@ -277,9 +277,128 @@ def at_edge(x, y, mon):
             "left": x <= mon.x + TOL, "right": x >= mon.x + mon.width - 1 - TOL}.get(edge, False)
 
 
+def make_click_through(xid):
+    """Empty X11 input shape => clicks pass through (same as edge-fx.py)."""
+    import ctypes
+    try:
+        x11 = ctypes.CDLL("libX11.so.6")
+        xext = ctypes.CDLL("libXext.so.6")
+        x11.XOpenDisplay.restype = ctypes.c_void_p
+        x11.XOpenDisplay.argtypes = [ctypes.c_char_p]
+        x11.XFlush.argtypes = [ctypes.c_void_p]
+        x11.XCloseDisplay.argtypes = [ctypes.c_void_p]
+        xext.XShapeCombineRectangles.argtypes = [
+            ctypes.c_void_p, ctypes.c_ulong, ctypes.c_int, ctypes.c_int, ctypes.c_int,
+            ctypes.c_void_p, ctypes.c_int, ctypes.c_int, ctypes.c_int]
+        dpy = x11.XOpenDisplay(None)
+        if dpy:
+            xext.XShapeCombineRectangles(dpy, xid, 2, 0, 0, None, 0, 0, 0)
+            x11.XFlush(dpy)
+            x11.XCloseDisplay(dpy)
+    except OSError:
+        pass
+
+
+class ChargeGlow:
+    """While the cursor pushes against the edge toward the Mac: a glow at that spot that
+    grows and slowly brightens over the switch delay (same look as on the Mac)."""
+
+    def __init__(self):
+        self.win = None
+        self.rect = None
+        self.fade_from = None
+        self.last = (0.0, 0)
+        self.css = Gtk.CssProvider()
+        Gtk.StyleContext.add_provider_for_screen(Gdk.Screen.get_default(), self.css,
+                                                 Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+
+    def _make(self, x, y, w, h):
+        win = Gtk.Window(type=Gtk.WindowType.POPUP)
+        win.get_style_context().add_class("chgwin")
+        visual = win.get_screen().get_rgba_visual()
+        if visual is not None:
+            win.set_visual(visual)
+        win.set_accept_focus(False)
+        win.set_keep_above(True)
+        win.move(x, y)
+        win.set_default_size(w, h)
+        win.set_size_request(w, h)
+        win.connect("realize", lambda ww: make_click_through(ww.get_window().get_xid()))
+        box = Gtk.Box()
+        box.set_name("chg")
+        win.add(box)
+        return win
+
+    def show(self, x, y, mon, p):
+        self.fade_from = None
+        edge = cfg.get("edge", "bottom")
+        d = int(max(40, float(cfg.get("glow", 48))) * 1.4)
+        if edge in ("top", "bottom"):
+            rect = (mon.x, mon.y if edge == "top" else mon.y + mon.height - d, mon.width, d)
+            along = x - mon.x
+        else:
+            rect = (mon.x if edge == "left" else mon.x + mon.width - d, mon.y, d, mon.height)
+            along = y - mon.y
+        if rect != self.rect:
+            if self.win:
+                self.win.destroy()
+            self.win, self.rect = self._make(*rect), rect
+        self.last = (p, along)
+        self.render(p, along, 1.0)
+        if not self.win.get_visible():
+            self.win.show_all()
+
+    def render(self, p, along, fade):
+        edge = cfg.get("edge", "bottom")
+        depth = max(40, float(cfg.get("glow", 48)))
+        level = (0.12 + 0.88 * p ** 1.8) * fade
+        reach = 90 + 300 * (1 - (1 - p) ** 2)
+        deep = depth * (0.55 + 0.75 * p)
+        c = [float(v) for v in cfg.get("color", [0.35, 0.85, 1.0])]
+        hot = [v + (1 - v) * 0.4 * p for v in c]
+        at = {"bottom": f"{along}px 100%", "top": f"{along}px 0%",
+              "left": f"0% {along}px", "right": f"100% {along}px"}[edge]
+        horizontal = edge in ("top", "bottom")
+
+        def grad(rx, ry, a, col):
+            size = f"{int(rx)}px {max(1, int(ry))}px" if horizontal else f"{max(1, int(ry))}px {int(rx)}px"
+            rgb = ",".join(str(int(round(v * 255))) for v in col)
+            return (f"radial-gradient(ellipse {size} at {at}, rgba({rgb},{a:.3f}) 0%, "
+                    f"rgba({rgb},{a * 0.5:.3f}) 45%, rgba({rgb},0) 100%)")
+
+        layers = [grad(reach * 0.9, 3, min(1.0, level * 1.1), hot),        # the edge line
+                  grad(reach * 0.35, deep * 0.45, level, hot),            # hot core
+                  grad(reach, deep, 0.9 * level, c)]                     # soft halo
+        self.css.load_from_data((".chgwin { background-color: transparent; }\n"
+                                 f"#chg {{ background-image: {', '.join(layers)}; }}").encode())
+
+    def hide(self):
+        if not self.win or not self.win.get_visible() or self.fade_from is not None:
+            return
+        self.fade_from = time.monotonic()
+
+        def step():
+            if self.fade_from is None:          # shown again meanwhile
+                return False
+            k = (time.monotonic() - self.fade_from) / 0.18
+            if k >= 1:
+                self.fade_from = None
+                self.win.hide()
+                return False
+            self.render(self.last[0], self.last[1], 1 - k)
+            return True
+        GLib.timeout_add(16, step)
+
+
+glow = None
+
+
 def charge_tick():
+    global glow
     delay = float(cfg.get("delay", 0.25))
-    enabled = cfg.get("chargeSound", True) and cfg.get("soundEnabled", True) and delay >= 0.05 and not cfg.get("paused")
+    base = delay >= 0.05 and not cfg.get("paused")
+    sound_on = base and cfg.get("chargeSound", True) and cfg.get("soundEnabled", True)
+    glow_on = base and cfg.get("chargeGlow", True) and cfg.get("effectEnabled", True)
     keep = max(0.08, delay * 0.8)
     try:
         mtime = STATE.stat().st_mtime
@@ -292,15 +411,28 @@ def charge_tick():
     display = Gdk.Display.get_default()
     _, x, y = display.get_default_seat().get_pointer().get_position()
     mon = display.get_monitor_at_point(x, y).get_geometry()
-    if enabled and mtime is not None and at_edge(x, y, mon):
+    if (sound_on or glow_on) and mtime is not None and at_edge(x, y, mon):
         if st["since"] is None and st["armed"]:
             st["since"] = time.monotonic()
             st["armed"] = False
-            play_charge()
+            if sound_on:
+                play_charge()
+        if st["since"] is not None and glow_on and not st["spent"]:
+            if glow is None:
+                glow = ChargeGlow()
+            p = (time.monotonic() - st["since"]) / delay
+            if p >= 1.1:        # fully charged: that's the crossing, don't wait for Deskflow's exit command
+                glow.hide()
+                st["spent"] = True
+            else:
+                glow.show(x, y, mon, min(1.0, p))
     else:
         if st["since"] is not None and time.monotonic() - st["since"] < keep:
             stop_sound()
+        if glow is not None:
+            glow.hide()     # also when Deskflow's exit command reset the charge first (no-op if hidden)
         st["since"] = None
+        st["spent"] = False
         if mtime is not None:
             st["armed"] = True
     return True

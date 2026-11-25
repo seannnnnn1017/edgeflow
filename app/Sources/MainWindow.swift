@@ -259,6 +259,7 @@ struct MainView: View {
                 SliderRow(label: T("fx_thick"), value: $engine.config.glow, range: 0...160, step: 4,
                           format: { $0 < 1 ? T("off") : "\(Int($0)) px" })
                 ToggleRow(label: T("ripple"), desc: T("ripple_d"), on: $engine.config.ripple)
+                ToggleRow(label: T("chglow"), desc: T("chglow_d"), on: $engine.config.chargeGlow)
                 HStack(spacing: 8) {
                     Text(T("preview")).font(.system(size: 12)).foregroundStyle(pal.mut).padding(.trailing, 4)
                     ChipButton(icon: "laptopcomputer", title: T("pv_mac")) { engine.previewMac() }

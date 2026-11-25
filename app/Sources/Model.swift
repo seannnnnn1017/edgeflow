@@ -100,6 +100,7 @@ struct FXConfig: Codable, Equatable {
     var duration: Double = 0.6
     var glow: Double = 48
     var ripple: Bool = true
+    var chargeGlow: Bool = true
     var macKeys: Bool = true
     var ime: String = "caps"               // caps | shift | ctrlspace
     var clipboard: Bool = true
@@ -118,7 +119,7 @@ struct FXConfig: Codable, Equatable {
         soundEnabled = v(.soundEnabled, d.soundEnabled); volume = v(.volume, d.volume)
         theme = v(.theme, d.theme); effectEnabled = v(.effectEnabled, d.effectEnabled)
         color = v(.color, d.color); duration = v(.duration, d.duration); glow = v(.glow, d.glow)
-        ripple = v(.ripple, d.ripple); macKeys = v(.macKeys, d.macKeys); ime = v(.ime, d.ime)
+        ripple = v(.ripple, d.ripple); chargeGlow = v(.chargeGlow, d.chargeGlow); macKeys = v(.macKeys, d.macKeys); ime = v(.ime, d.ime)
         clipboard = v(.clipboard, d.clipboard); screenshotToClipboard = v(.screenshotToClipboard, d.screenshotToClipboard)
         computers = v(.computers, d.computers); setupDone = v(.setupDone, d.setupDone); paused = v(.paused, d.paused)
         if color.count != 3 { color = d.color }
@@ -136,7 +137,7 @@ struct FXConfig: Codable, Equatable {
         [
             "delay": delay, "chargeSound": chargeSound, "soundEnabled": soundEnabled, "volume": volume,
             "theme": theme, "effectEnabled": effectEnabled, "color": color, "duration": duration,
-            "glow": glow, "ripple": ripple, "clipboard": clipboard,
+            "glow": glow, "ripple": ripple, "chargeGlow": chargeGlow, "clipboard": clipboard,
             "edge": c.side.opposite.rawValue, "keys": keys(for: c), "ime": ime,
             "screen": c.screen, "server": serverIP, "serverHost": Env.macHost,
             // only the sounds the other computer plays (return.wav is the Mac's own)

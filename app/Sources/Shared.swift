@@ -311,6 +311,9 @@ struct LivePreview: View {
                         Circle().strokeBorder(ac, lineWidth: 2).frame(width: 34, height: 34).scaleEffect(s).opacity(o)
                             .position(ripplePoint(W, H))
                     }
+                    if cfg.delay >= 0.05 && cfg.effectEnabled && cfg.chargeGlow, let k = chargeGlow(p) {
+                        chargeGlowView(k, W, H)
+                    }
                     if cfg.delay >= 0.05, let (o, s) = charge(p) {
                         Circle().strokeBorder(ac, style: StrokeStyle(lineWidth: 2, dash: [4, 3])).frame(width: 30, height: 30)
                             .scaleEffect(s).opacity(o).position(chargePoint(W, H))
@@ -382,6 +385,41 @@ struct LivePreview: View {
         guard p >= 0.5, p < 0.78 else { return nil }
         let k = (p - 0.5) / 0.28
         return (0.9 * (1 - k), 0.1 + 2.1 * (1 - pow(1 - k, 2)))
+    }
+    /// Charge glow progress during the push (0.32–0.48), then a quick fade; matches ChargeLook.
+    private func chargeGlow(_ p: Double) -> (progress: Double, fade: Double)? {
+        if p >= 0.32 && p < 0.48 { return ((p - 0.32) / 0.16, 1) }
+        if p >= 0.48 && p < 0.51 { return (1, 1 - (p - 0.48) / 0.03) }
+        return nil
+    }
+    private func chargeGlowView(_ k: (progress: Double, fade: Double), _ W: CGFloat, _ H: CGFloat) -> some View {
+        let b = mac, q = k.progress
+        let level = ChargeLook.level(q) * k.fade
+        let horizontal = side == .top || side == .bottom
+        // the spot on the Mac's edge where the cursor pushes (cursor keyframe at the edge)
+        let c: CGPoint = switch side {
+        case .top: CGPoint(x: 0.48 * W + 6, y: b[1] * H)
+        case .bottom: CGPoint(x: 0.48 * W + 6, y: (b[1] + b[3]) * H)
+        case .left: CGPoint(x: b[0] * W, y: 0.46 * H + 8)
+        case .right: CGPoint(x: (b[0] + b[2]) * W, y: 0.46 * H + 8)
+        }
+        // scaled down from screen pixels to the little preview
+        let rx = ChargeLook.reach(q) * 0.16, ry = max(10, cfg.glow) * 0.22 * ChargeLook.deep(q)
+        let w = horizontal ? rx : ry, h = horizontal ? ry : rx
+        let ell = { (sx: Double, sy: Double, a: Double, col: Color) in
+            Ellipse().fill(RadialGradient(colors: [col.opacity(a), col.opacity(a * 0.5), col.opacity(0)],
+                                          center: .center, startRadius: 0, endRadius: 0.5))
+                .frame(width: 2 * w * sx, height: 2 * h * sy)
+                .position(c)
+        }
+        return ZStack {
+            ell(1, 1, 0.9 * level, ac)
+            ell(0.35, 0.45, level, Color(nsColor: NSColor(ac).blended(withFraction: 0.4 * q, of: .white) ?? NSColor(ac)))
+        }
+        .frame(width: W, height: H)
+        .mask(RoundedRectangle(cornerRadius: 8).frame(width: b[2] * W, height: b[3] * H)
+                .position(x: (b[0] + b[2] / 2) * W, y: (b[1] + b[3] / 2) * H))
+        .allowsHitTesting(false)
     }
     private func charge(_ p: Double) -> (Double, Double)? {
         guard p >= 0.3, p < 0.5 else { return nil }

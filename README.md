@@ -8,6 +8,7 @@ Built on [Deskflow](https://github.com/deskflow/deskflow); Edgeflow adds the par
 - **一鍵配對 / One-line pairing** — the Mac shows a command to paste on the other computer (or installs it over SSH with an IP and password). It installs Deskflow, sets up TLS certificates both ways, and connects, with no trust prompts.
 - **邊緣阻力 / Edge resistance** — hold the cursor against the edge for a moment (adjustable) before it crosses, with a charge sound.
 - **特效與音效 / Effects and sounds** — glow and ripple where the cursor arrives, on both computers; themes, color, volume.
+- **蓄力光暈 / Charge glow** — while you push against the edge, that spot slowly lights up; full brightness is the moment you cross.
 - **多螢幕 / Multiple screens** — when the other computer has several screens, the layout map shows each one; drag to choose which screen the Mac's edge leads to (the main screen by default).
 - **Mac 按鍵習慣 / Mac key habits** — ⌘ acts as Ctrl, Caps Lock switches 中/英, ⌘⇧3/4/5 take screenshots on the other computer.
 - **剪貼簿 / Clipboard** — text and images both ways; Mac screenshots go straight to the clipboard.

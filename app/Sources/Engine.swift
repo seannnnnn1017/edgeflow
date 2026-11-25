@@ -88,7 +88,11 @@ final class Engine: ObservableObject {
         if cfg.setupDone { clipboard.start() }
         logs.onChange = { [weak self] in self?.refreshStatus() }
         logs.onSwitch = { [weak self] a, b in
-            DispatchQueue.main.async { self?.crossings.append((a, b, Date())); if (self?.crossings.count ?? 0) > 20 { self?.crossings.removeFirst() } }
+            DispatchQueue.main.async {
+                if a == Env.macScreen { self?.charge.crossed() }
+                self?.crossings.append((a, b, Date()))
+                if (self?.crossings.count ?? 0) > 20 { self?.crossings.removeFirst() }
+            }
         }
         logs.start()
         discovery.onUpdate = { [weak self] f, s in self?.found = f; self?.searching = s }
@@ -116,7 +120,11 @@ final class Engine: ObservableObject {
     }
 
     private func applyRuntime(_ c: FXConfig) {
-        charge.enabled = c.chargeSound && c.soundEnabled && c.delay >= 0.05 && !c.paused
+        charge.soundOn = c.chargeSound && c.soundEnabled && c.delay >= 0.05 && !c.paused
+        charge.glowOn = c.chargeGlow && c.effectEnabled && c.delay >= 0.05 && !c.paused
+        charge.delay = c.delay
+        charge.color = NSColor(srgbRed: c.color[0], green: c.color[1], blue: c.color[2], alpha: 1)
+        charge.depth = max(40, c.glow)
         charge.keepIfHeld = max(0.08, c.delay * 0.8)
         charge.volume = Float(c.volume)
         charge.sides = Set(c.computers.map(\.side))

@@ -7,7 +7,7 @@ import Foundation
 import SystemConfiguration
 
 enum Env {
-    static let version = "1.1.0"
+    static let version = "1.2.2"
     static let home = FileManager.default.homeDirectoryForCurrentUser
     static let dfDir = home.appendingPathComponent("Library/Deskflow")
     static let fxDir = dfDir.appendingPathComponent("fx")

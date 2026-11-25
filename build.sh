@@ -43,8 +43,8 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>CFBundleExecutable</key><string>Edgeflow</string>
   <key>CFBundleIconFile</key><string>AppIcon</string>
   <key>CFBundlePackageType</key><string>APPL</string>
-  <key>CFBundleShortVersionString</key><string>1.1.0</string>
-  <key>CFBundleVersion</key><string>110</string>
+  <key>CFBundleShortVersionString</key><string>1.2.2</string>
+  <key>CFBundleVersion</key><string>122</string>
   <key>CFBundleDevelopmentRegion</key><string>zh_TW</string>
   <key>CFBundleLocalizations</key><array><string>zh_TW</string><string>en</string></array>
   <key>LSMinimumSystemVersion</key><string>14.0</string>

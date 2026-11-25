@@ -225,14 +225,26 @@ final class LogWatcher {
 /// Plays the charge-up sound while the cursor is pressed against an edge that has a
 /// computer behind it; stops if you let go before Deskflow switches.
 final class ChargeWatcher {
-    var enabled = true
+    var soundOn = true
+    var glowOn = true
+    var delay: Double = 0.25
     var keepIfHeld: TimeInterval = 0.2
     var volume: Float = 0.6
+    var color: NSColor = .cyan
+    var depth: CGFloat = 48
     var sides: Set<Side> = []
     private var sound: NSSound?
+    private let glow = ChargeGlow()
     private var edgeSince: Date?
     private var armed = true
+    private var spent = false      // this push already charged fully (the cursor crossed)
     private var timer: Timer?
+
+    /// The cursor went to another computer. Deskflow leaves the Mac's cursor parked on the
+    /// edge meanwhile, so without this the glow would stay lit.
+    func crossed() {
+        glow.hide(); spent = true
+    }
 
     func reloadSound() {
         sound = NSSound(contentsOf: Env.fxDir.appendingPathComponent("charge.wav"), byReference: false)
@@ -244,24 +256,41 @@ final class ChargeWatcher {
         timer = Timer.scheduledTimer(withTimeInterval: 1.0 / 60.0, repeats: true) { [weak self] _ in self?.tick() }
     }
 
-    private func atEdge(_ m: NSPoint) -> Bool {
+    /// The side whose edge the cursor is pressed against, if a computer is there.
+    private func edge(_ m: NSPoint) -> Side? {
         let frames = NSScreen.screens.map(\.frame)
-        guard let u = frames.first else { return false }
+        guard let u = frames.first else { return nil }
         let all = frames.dropFirst().reduce(u) { $0.union($1) }
-        return (sides.contains(.top) && m.y >= all.maxY - 2) || (sides.contains(.bottom) && m.y <= all.minY + 1)
-            || (sides.contains(.left) && m.x <= all.minX + 1) || (sides.contains(.right) && m.x >= all.maxX - 2)
+        if sides.contains(.top) && m.y >= all.maxY - 2 { return .top }
+        if sides.contains(.bottom) && m.y <= all.minY + 1 { return .bottom }
+        if sides.contains(.left) && m.x <= all.minX + 1 { return .left }
+        if sides.contains(.right) && m.x >= all.maxX - 2 { return .right }
+        return nil
     }
 
     private func tick() {
-        guard enabled, let sound else { edgeSince = nil; return }
-        if atEdge(NSEvent.mouseLocation) {
+        guard soundOn || glowOn else {
+            if edgeSince != nil { glow.hide() }
+            edgeSince = nil; return
+        }
+        let m = NSEvent.mouseLocation
+        if let side = edge(m) {
             if edgeSince == nil && armed {
                 edgeSince = Date(); armed = false
-                sound.stop(); sound.currentTime = 0; sound.volume = volume; sound.play()
+                if soundOn, let sound { sound.stop(); sound.currentTime = 0; sound.volume = volume; sound.play() }
+            }
+            if let s = edgeSince, glowOn, !spent {
+                let p = Date().timeIntervalSince(s) / max(0.05, delay)
+                if p >= 1.1 {
+                    glow.hide(); spent = true      // fully charged: that's the crossing
+                } else {
+                    glow.show(at: m, side: side, progress: min(1, p), color: color, depth: depth)
+                }
             }
         } else {
-            if let s = edgeSince, Date().timeIntervalSince(s) < keepIfHeld { sound.stop() }
-            edgeSince = nil; armed = true
+            if let s = edgeSince, Date().timeIntervalSince(s) < keepIfHeld { sound?.stop() }
+            glow.hide()     // no-op when already hidden
+            edgeSince = nil; armed = true; spent = false
         }
     }
 }

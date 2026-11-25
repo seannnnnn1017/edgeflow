@@ -31,7 +31,7 @@ using System.Windows.Forms;
 
 public static class EF
 {
-    public const string Version = "1.1.0";
+    public const string Version = "1.2.2";
     static string Dir, CoreExe, CoreDir, ConfPath, LogPath;
     static Dictionary<string, object> Dev;
     static Dictionary<string, object> Cfg = new Dictionary<string, object>();
@@ -211,23 +211,46 @@ public static class EF
         }
     }
 
+    static ChargeGlow Glow;
+    static bool Spent;   // this push already charged fully (the cursor crossed)
+
+    static Color Accent()
+    {
+        var col = Color.FromArgb(89, 217, 255);
+        var c = Get("color") as IList;
+        if (c != null && c.Count == 3)
+            col = Color.FromArgb((int)(Convert.ToDouble(c[0]) * 255), (int)(Convert.ToDouble(c[1]) * 255), (int)(Convert.ToDouble(c[2]) * 255));
+        return col;
+    }
+
     static void ChargeTick()
     {
         double delay = D("delay", 0.25);
-        bool on = B("chargeSound", true) && B("soundEnabled", true) && delay >= 0.05 && !Paused && Active;
-        if (on && AtEdge(Cursor.Position))
+        bool baseOn = delay >= 0.05 && !Paused && Active;
+        bool soundOn = baseOn && B("chargeSound", true) && B("soundEnabled", true);
+        bool glowOn = baseOn && B("chargeGlow", true) && B("effectEnabled", true);
+        var pos = Cursor.Position;
+        if ((soundOn || glowOn) && AtEdge(pos))
         {
             if (EdgeSince == null && Armed)
             {
                 EdgeSince = DateTime.Now; Armed = false;
-                if (ChargePlayer != null) { try { ChargePlayer.Stop(); ChargePlayer.Play(); } catch { } }
+                if (soundOn && ChargePlayer != null) { try { ChargePlayer.Stop(); ChargePlayer.Play(); } catch { } }
+            }
+            if (EdgeSince != null && glowOn && !Spent)
+            {
+                if (Glow == null) Glow = new ChargeGlow();
+                double p = (DateTime.Now - EdgeSince.Value).TotalSeconds / delay;
+                if (p >= 1.1) { Glow.Hide(); Spent = true; }   // fully charged: that's the crossing
+                else Glow.Show(pos, S("edge", "bottom"), Math.Min(1, p), Accent(), Math.Max(40, D("glow", 48)));
             }
         }
         else
         {
             if (EdgeSince != null && (DateTime.Now - EdgeSince.Value).TotalSeconds < Math.Max(0.08, delay * 0.8))
                 if (ChargePlayer != null) ChargePlayer.Stop();
-            EdgeSince = null;
+            if (Glow != null) Glow.Hide();   // no-op when already hidden
+            EdgeSince = null; Spent = false;
             if (Active) Armed = true;
         }
     }
@@ -237,10 +260,7 @@ public static class EF
     {
         if (B("soundEnabled", true) && EnterPlayer != null) { try { EnterPlayer.Play(); } catch { } }
         if (!B("effectEnabled", true)) return;
-        var col = Color.FromArgb(89, 217, 255);
-        var c = Get("color") as IList;
-        if (c != null && c.Count == 3)
-            col = Color.FromArgb((int)(Convert.ToDouble(c[0]) * 255), (int)(Convert.ToDouble(c[1]) * 255), (int)(Convert.ToDouble(c[2]) * 255));
+        var col = Accent();
         new Arrival(Cursor.Position, S("edge", "bottom"), col, D("duration", 0.6), (int)D("glow", 48), B("ripple", true)).Start();
     }
 
@@ -557,6 +577,112 @@ public class Layered : Form
             ReleaseDC(IntPtr.Zero, screen);
             if (hb != IntPtr.Zero) { SelectObject(mem, old); DeleteObject(hb); }
             DeleteDC(mem);
+        }
+    }
+}
+
+/// While the cursor pushes against the edge toward the Mac: a glow at that spot that grows
+/// and slowly brightens over the switch delay (same look as on the Mac).
+public class ChargeGlow
+{
+    Layered win;
+    Rectangle rect;
+    string edge = "bottom";
+    double lastP; int lastAlong; Color lastCol; double lastDepth;
+    DateTime? fadeFrom;
+    System.Windows.Forms.Timer fadeTimer;
+    readonly float k;
+
+    public ChargeGlow() { using (var g = Graphics.FromHwnd(IntPtr.Zero)) k = g.DpiX / 96f; }
+
+    public void Show(Point cur, string edge, double p, Color col, double depth)
+    {
+        fadeFrom = null;
+        if (fadeTimer != null) { fadeTimer.Stop(); fadeTimer = null; }
+        this.edge = edge;
+        var mon = Screen.FromPoint(cur).Bounds;
+        int d = (int)(depth * 1.4 * k);
+        Rectangle r;
+        if (edge == "top") r = new Rectangle(mon.Left, mon.Top, mon.Width, d);
+        else if (edge == "left") r = new Rectangle(mon.Left, mon.Top, d, mon.Height);
+        else if (edge == "right") r = new Rectangle(mon.Right - d, mon.Top, d, mon.Height);
+        else r = new Rectangle(mon.Left, mon.Bottom - d, mon.Width, d);
+        if (win == null || r != rect)
+        {
+            if (win != null) win.Close();
+            win = new Layered(r); rect = r;
+            win.Show();
+        }
+        bool horizontal = edge == "top" || edge == "bottom";
+        lastP = p; lastCol = col; lastDepth = depth;
+        lastAlong = horizontal ? cur.X - r.Left : cur.Y - r.Top;
+        Render(1.0);
+    }
+
+    public void Hide()
+    {
+        if (win == null || fadeFrom != null) return;
+        fadeFrom = DateTime.Now;
+        fadeTimer = new System.Windows.Forms.Timer();
+        fadeTimer.Interval = 16;
+        fadeTimer.Tick += delegate
+        {
+            if (fadeFrom == null) return;
+            double q = (DateTime.Now - fadeFrom.Value).TotalSeconds / 0.18;
+            if (q >= 1)
+            {
+                fadeTimer.Stop(); fadeTimer = null; fadeFrom = null;
+                win.Close(); win = null;
+                return;
+            }
+            Render(1 - q);
+        };
+        fadeTimer.Start();
+    }
+
+    void Render(double fade)
+    {
+        double p = lastP;
+        double level = (0.12 + 0.88 * Math.Pow(p, 1.8)) * fade;
+        double reach = (90 + 300 * (1 - Math.Pow(1 - p, 2))) * k;
+        double deep = lastDepth * (0.55 + 0.75 * p) * k;
+        var hot = Color.FromArgb((int)(lastCol.R + (255 - lastCol.R) * 0.4 * p), (int)(lastCol.G + (255 - lastCol.G) * 0.4 * p),
+                                 (int)(lastCol.B + (255 - lastCol.B) * 0.4 * p));
+        bool horizontal = edge == "top" || edge == "bottom";
+        float ox, oy;
+        if (edge == "top") { ox = lastAlong; oy = 0; }
+        else if (edge == "bottom") { ox = lastAlong; oy = rect.Height; }
+        else if (edge == "left") { ox = 0; oy = lastAlong; }
+        else { ox = rect.Width; oy = lastAlong; }
+        using (var bmp = new Bitmap(rect.Width, rect.Height, PixelFormat.Format32bppArgb))
+        {
+            using (var g = Graphics.FromImage(bmp))
+            {
+                g.SmoothingMode = SmoothingMode.AntiAlias;
+                Blob(g, ox, oy, horizontal, reach, deep, 0.9 * level, lastCol);           // soft halo
+                Blob(g, ox, oy, horizontal, reach * 0.35, deep * 0.45, level, hot);    // hot core
+                Blob(g, ox, oy, horizontal, reach * 0.9, 3 * k, Math.Min(1, level * 1.1), hot); // edge line
+            }
+            win.SetBitmap(bmp, 255);
+        }
+    }
+
+    static void Blob(Graphics g, float ox, float oy, bool horizontal, double rx, double ry, double a, Color c)
+    {
+        float w = (float)(horizontal ? rx : ry), h = (float)(horizontal ? ry : rx);
+        if (w < 1 || h < 1 || a <= 0.003) return;
+        using (var path = new GraphicsPath())
+        {
+            path.AddEllipse(ox - w, oy - h, w * 2, h * 2);
+            using (var br = new PathGradientBrush(path))
+            {
+                br.CenterPoint = new PointF(ox, oy);
+                var blend = new ColorBlend(3);
+                blend.Colors = new Color[] { Color.FromArgb(0, c), Color.FromArgb((int)(255 * a * 0.5), c), Color.FromArgb((int)(255 * Math.Min(1, a)), c) };
+                blend.Positions = new float[] { 0f, 0.55f, 1f };
+                br.InterpolationColors = blend;
+                g.FillPath(br, path);
+            }
         }
     }
 }
