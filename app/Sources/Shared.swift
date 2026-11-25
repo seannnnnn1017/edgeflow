@@ -163,7 +163,7 @@ struct LayoutMap: View {
             .overlay { if let g = glowSide { EdgeGlow(side: g) } }
             .offset(x: 140, y: 77)
 
-            ForEach(engine.config.computers) { c in
+            ForEach(engine.here) { c in
                 if let g = ScreenGroupGeo(c) {
                     screenGroup(c, g)
                 } else {

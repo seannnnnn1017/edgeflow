@@ -104,7 +104,7 @@ struct MenuPanel: View {
             }
             .foregroundStyle(pal.mut).padding(.horizontal, 10).padding(.vertical, 5)
             divider
-            ForEach(engine.config.computers) { c in
+            ForEach(engine.here) { c in
                 row {
                     Circle().fill(engine.isOnline(c) ? DotColor.green : DotColor.grey).frame(width: 7, height: 7)
                     Text(c.name)
@@ -112,7 +112,7 @@ struct MenuPanel: View {
                     Text(c.side.label).font(.system(size: 12)).foregroundStyle(pal.mut)
                 } action: { open() }
             }
-            if !engine.config.computers.isEmpty { divider }
+            if !engine.here.isEmpty { divider }
             row {
                 Image(systemName: "checkmark").font(.system(size: 11, weight: .semibold)).frame(width: 14)
                     .opacity(engine.config.paused ? 1 : 0)

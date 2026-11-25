@@ -23,7 +23,7 @@ struct Badge {
     var dot: Color, l1: String, l2: String, pulse: Bool
 
     init(_ e: Engine) {
-        let c0 = e.config.computers.first
+        let c0 = e.here.first
         let ip = c0.map { e.live[$0.id]?.ip ?? $0.ip } ?? ""
         switch e.status {
         case let .connected(n): self = .init(DotColor.green, T("b_connected", ["name": n]), ip, true)
@@ -140,7 +140,7 @@ struct MainView: View {
     private struct BannerSpec { var icon: String; var text: String; var desc: String; var btn: String; var color: Color; var act: () -> Void }
 
     private var banner: BannerSpec? {
-        let n0 = engine.config.computers.first?.name ?? ""
+        let n0 = engine.here.first?.name ?? ""
         switch engine.status {
         case .noperm: return BannerSpec(icon: "exclamationmark.triangle.fill", text: T("bn_ax"), desc: T("bn_permlost"),
                                         btn: T("openSettings"), color: DotColor.orange) { engine.openAccessibilitySettings() }
@@ -175,11 +175,17 @@ struct MainView: View {
                     ChipButton(icon: "plus", title: T("add"), action: addComputer)
                 }
                 LayoutMap(onTap: { detail = $0.id; confirmRemove = false })
-                Text(T("map_hint")).font(.system(size: 11.5)).foregroundStyle(pal.mut).frame(maxWidth: .infinity)
+                if engine.here.isEmpty && engine.elsewhere > 0 {
+                    // the computers paired on other networks come back when the Mac does
+                    Label(T("net_away", ["n": "\(engine.elsewhere)"]), systemImage: "wifi")
+                        .font(.system(size: 11.5)).foregroundStyle(pal.mut).frame(maxWidth: .infinity)
+                } else {
+                    Text(T("map_hint")).font(.system(size: 11.5)).foregroundStyle(pal.mut).frame(maxWidth: .infinity)
+                }
             }
             Card(spacing: 12) {
                 CardHeader(icon: "play.circle", title: T("sec_prev"))
-                let c0 = engine.config.computers.first
+                let c0 = engine.here.first
                 LivePreview(cfg: engine.config, side: c0?.side ?? .right, remoteName: c0?.name ?? "lab_pc")
             }
         }
@@ -271,7 +277,7 @@ struct MainView: View {
     }
 
     private var keysCard: some View {
-        let win = engine.config.computers.first?.isWindows ?? false
+        let win = engine.here.first?.isWindows ?? false
         let imeKeys: [String] = ["caps": ["⇪"], "shift": ["⇧"], "ctrlspace": ["⌃", "Space"]][engine.config.ime] ?? ["⇪"]
         let rows: [([String], [String], String)] = [
             (["⌘"], ["Ctrl"], T("k_d1")), (imeKeys, [T("k_cn")], T("k_d2")), (["⌥"], ["Alt"], T("k_d3")),
@@ -337,7 +343,7 @@ struct MainView: View {
     }
 
     @ViewBuilder private var syncLabel: some View {
-        let old = engine.config.computers.first { engine.isOnline($0) && engine.helperOutdated($0) }
+        let old = engine.here.first { engine.isOnline($0) && engine.helperOutdated($0) }
         HStack(spacing: 6) {
             if let c = old {
                 Image(systemName: "arrow.up.circle").foregroundStyle(DotColor.orange)

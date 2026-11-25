@@ -32,6 +32,10 @@ final class Engine: ObservableObject {
     @Published var config: FXConfig { didSet { if config != oldValue { configChanged(from: oldValue) } } }
     @Published var status: LinkStatus = .none
     @Published var macIP = Net.lanIPv4() ?? ""
+    /// The network the Mac is on (its router's hardware address); nil when offline/unknown.
+    @Published private(set) var network: String?
+    private var routerIP: String?
+    private var netTicks = 0
     @Published var sync: SyncStatus = .loading
     @Published var live: [String: DeviceLive] = [:]
     @Published var perms: [String: PermState] = ["ax": .none, "lan": .none, "desk": .none, "login": .none]
@@ -63,8 +67,11 @@ final class Engine: ObservableObject {
     var macScreen: String { Env.macScreen }
 
     private init() {
-        let cfg = (try? Data(contentsOf: Env.configURL)).flatMap { try? JSONDecoder().decode(FXConfig.self, from: $0) } ?? FXConfig()
-        config = cfg
+        let saved = (try? Data(contentsOf: Env.configURL)).flatMap { try? JSONDecoder().decode(FXConfig.self, from: $0) } ?? FXConfig()
+        config = saved
+        macIP = Net.lanIPv4() ?? ""
+        if let n = Net.network() { routerIP = n.router; network = n.id }
+        let cfg = forHere(saved)
         perms["ax"] = AXIsProcessTrusted() ? .ok : .none
         perms["login"] = SMAppService.mainApp.status == .enabled ? .ok : .none
         if UserDefaults.standard.bool(forKey: "lanOK") { perms["lan"] = .ok }
@@ -119,7 +126,8 @@ final class Engine: ObservableObject {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.6, execute: w)
     }
 
-    private func applyRuntime(_ c: FXConfig) {
+    private func applyRuntime(_ all: FXConfig) {
+        let c = forHere(all)
         charge.soundOn = c.chargeSound && c.soundEnabled && c.delay >= 0.05 && !c.paused
         charge.glowOn = c.chargeGlow && c.effectEnabled && c.delay >= 0.05 && !c.paused
         charge.delay = c.delay
@@ -140,7 +148,7 @@ final class Engine: ObservableObject {
 
     /// Sounds, Deskflow files, and (when needed) a core restart; helpers pick the rest up on their next poll.
     private func apply() {
-        let cfg = config
+        let cfg = forHere(config)
         sync = cfg.computers.isEmpty ? .ok(Date()) : .syncing
         changedAt = Date()
         work.async {
@@ -163,9 +171,12 @@ final class Engine: ObservableObject {
     // MARK: status
 
     private func tick() {
+        netTicks += 1
+        if netTicks % 5 == 0 { checkNetwork() }
+        let ip = Net.lanIPv4() ?? ""
+        if ip != macIP { macIP = ip; checkNetwork() }
         if !trusted && AXIsProcessTrusted() { perms["ax"] = .ok; if !config.paused { core.start() } }
         if trusted && !AXIsProcessTrusted() { perms["ax"] = .none }
-        macIP = Net.lanIPv4() ?? ""
         refreshPeers()
         if let s = session, s.isExpired { s.state = .expired; sessionTick += 1 }
         refreshStatus()
@@ -187,7 +198,7 @@ final class Engine: ObservableObject {
 
     func refreshStatus() {
         DispatchQueue.main.async { [self] in
-            let cs = config.computers
+            let cs = here
             let s: LinkStatus
             if !trusted { s = .noperm }
             else if config.paused { s = .paused }
@@ -209,7 +220,7 @@ final class Engine: ObservableObject {
 
     private func refreshSync() {
         guard case .syncing = sync else { return }
-        let withHelper = config.computers.filter { live[$0.id] != nil }
+        let withHelper = here.filter { live[$0.id] != nil }
         if withHelper.allSatisfy({ live[$0.id]?.configVersion == configVersion }) { sync = .ok(Date()); return }
         if Date().timeIntervalSince(changedAt) > 15, let c = withHelper.first(where: { live[$0.id]?.configVersion != configVersion }) {
             sync = .fail(c.name)
@@ -217,12 +228,54 @@ final class Engine: ObservableObject {
     }
 
     func computer(_ id: String) -> Computer? { config.computers.first { $0.id == id } }
+
+    // MARK: networks
+
+    /// Whether a computer belongs to the network the Mac is on now. Computers are remembered
+    /// per network: away from it they're hidden and left out of Deskflow, and they come back
+    /// when the Mac returns. One not yet seen since networks were told apart goes by its IP range.
+    func onNetwork(_ c: Computer) -> Bool {
+        if let n = c.network { return n == network }
+        return !macIP.isEmpty && !c.ip.isEmpty && Net.sameSubnet24(c.ip, macIP)
+    }
+    /// The computers on this network.
+    var here: [Computer] { config.computers.filter(onNetwork) }
+    /// Computers paired on other networks (hidden here).
+    var elsewhere: Int { config.computers.count - here.count }
+    private func forHere(_ c: FXConfig) -> FXConfig { var x = c; x.computers = c.computers.filter(onNetwork); return x }
+
+    private var netCandidate: String?
+    private var netChecking = false
+
+    /// Looks at the router every few seconds; a change has to show twice in a row (a Wi-Fi
+    /// hiccup shouldn't drop everything), then Deskflow is set up for the new network.
+    private func checkNetwork() {
+        guard !netChecking else { return }
+        netChecking = true
+        DispatchQueue.global(qos: .utility).async {
+            let r = Net.network()
+            DispatchQueue.main.async { [self] in
+                netChecking = false
+                var id = r?.id
+                if id == nil, let r, r.router == routerIP { id = network }   // same router, address just not read this time
+                routerIP = r?.router
+                guard id != network else { netCandidate = nil; return }
+                let key = id ?? "-"
+                if netCandidate != key { netCandidate = key; return }
+                netCandidate = nil
+                network = id
+                applyRuntime(config)
+                refreshStatus()
+                apply()
+            }
+        }
+    }
     func isOnline(_ c: Computer) -> Bool {
         logs.connected.contains(c.screen) || peers.contains(live[c.id]?.ip ?? c.ip) || peers.contains(c.ip)
     }
     func helperOutdated(_ c: Computer) -> Bool {
         guard let v = live[c.id]?.helperVersion ?? c.helperVersion else { return true }
-        return v.compare(Env.version, options: .numeric) == .orderedAscending
+        return v.compare(Env.helperVersion, options: .numeric) == .orderedAscending
     }
 
     // MARK: actions
@@ -236,10 +289,10 @@ final class Engine: ObservableObject {
         say(T("t_reconnect"))
         logs.reset()
         work.async {
-            DeskflowConf.write(self.config)
+            DeskflowConf.write(self.forHere(self.config))
             if self.trusted && !self.config.paused { self.core.restart() }
         }
-        for c in config.computers { commands[c.id, default: []].append("restart") }
+        for c in here { commands[c.id, default: []].append("restart") }
     }
 
     func setPaused(_ p: Bool) {
@@ -266,12 +319,12 @@ final class Engine: ObservableObject {
     func previewMac() {
         let p = Process()
         p.executableURL = Env.fxDir.appendingPathComponent("edge-fx")
-        p.arguments = [Env.fxDir.appendingPathComponent("return.wav").path, config.computers.first?.side.rawValue ?? "top"]
+        p.arguments = [Env.fxDir.appendingPathComponent("return.wav").path, here.first?.side.rawValue ?? "top"]
         try? p.run()
     }
 
     func previewRemote() {
-        guard let c = config.computers.first else { return }
+        guard let c = here.first else { return }
         commands[c.id, default: []].append("preview")
         say(T("t_rem", ["name": c.name]))
     }
@@ -309,7 +362,7 @@ final class Engine: ObservableObject {
     func place(_ id: String, _ side: Side) {
         guard let i = config.computers.firstIndex(where: { $0.id == id }) else { return }
         let old = config.computers[i].side
-        if let j = config.computers.firstIndex(where: { $0.side == side && $0.id != id }) { config.computers[j].side = old }
+        if let j = config.computers.firstIndex(where: { $0.side == side && $0.id != id && onNetwork($0) }) { config.computers[j].side = old }
         config.computers[i].side = side
     }
 
@@ -379,7 +432,7 @@ final class Engine: ObservableObject {
     }
 
     private func freeSide() -> Side {
-        for s: Side in [.right, .left, .top, .bottom] where config.computer(side: s) == nil { return s }
+        for s: Side in [.right, .left, .top, .bottom] where !here.contains(where: { $0.side == s }) { return s }
         return .right
     }
 
@@ -437,7 +490,8 @@ final class Engine: ObservableObject {
             c = Computer(id: "d-" + Crypto.randomHex(4), name: host, screen: uniqueScreen(host), os: os,
                          osv: f["osv"] ?? (os == "windows" ? "Windows" : "Linux"), ip: r.remoteIP, icon: "desktop",
                          side: freeSide(), keys: nil, key: Crypto.randomHex(16), fingerprint: fp,
-                         helperVersion: Env.version, ssh: s.viaSSH)
+                         helperVersion: Env.helperVersion, ssh: s.viaSSH)
+            c.network = network
             config.computers.append(c)
             s.deviceId = c.id
             s.os = os
@@ -446,7 +500,7 @@ final class Engine: ObservableObject {
             s.steps[1] = .running
             sessionTick += 1
         }
-        let cfg = config
+        let cfg = forHere(config)
         DeskflowConf.write(cfg)
         if trusted && !cfg.paused { logs.reset(); core.restart() }
         let url = "http://\(macIP):\(Env.pairPort)"
@@ -488,6 +542,8 @@ final class Engine: ObservableObject {
             if c.ip != r.remoteIP && !r.remoteIP.isEmpty { update(id) { $0.ip = r.remoteIP } }
             if let v = r.query["v"], c.helperVersion != v { update(id) { $0.helperVersion = v } }
             if let m = r.query["mon"].flatMap(Monitor.parse), c.monitors != m { update(id) { $0.monitors = m } }
+            // it reached the Mac over the LAN, so it's on this network
+            if let n = network, c.network != n { update(id) { $0.network = n } }
             out = config.deviceConfig(for: c, serverIP: macIP, wavHashes: wavHashes)
             out["cv"] = configVersion
             out["commands"] = commands[id] ?? []

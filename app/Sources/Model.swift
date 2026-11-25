@@ -28,6 +28,7 @@ struct Computer: Codable, Identifiable, Equatable {
     var ssh: Bool = false
     var monitors: [Monitor]? = nil  // its screens, as its helper reports them
     var edgeStart: Double? = nil    // where the Mac's edge starts along its edge (0–1), see edgeRange
+    var network: String? = nil      // the network it was last seen on (its router's address), see Engine.onNetwork
 
     var isWindows: Bool { os == "windows" }
     var sfIcon: String { ["laptop": "laptopcomputer", "server": "server.rack"][icon] ?? "desktopcomputer" }
@@ -143,7 +144,7 @@ struct FXConfig: Codable, Equatable {
             // only the sounds the other computer plays (return.wav is the Mac's own)
             "edgeLo": c.edgeRange?.0 ?? 0, "edgeHi": c.edgeRange?.1 ?? 1,
             "paused": paused, "files": wavHashes.filter { ["enter.wav", "charge.wav"].contains($0.key) },
-            "helperLatest": Env.version,
+            "helperLatest": Env.helperVersion,
         ]
     }
 }

@@ -125,7 +125,22 @@ Get-CimInstance Win32_Process -Filter "Name='powershell.exe'" | Where-Object { $
     ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
 $logWin = Join-Path $Dir 'deskflow\deskflow.log'
 if (Test-Path $logWin) { Clear-Content $logWin }
-Start-Process wscript.exe -ArgumentList "`"$vbs`""
+# Start it through Task Scheduler: anything started from this window belongs to the
+# terminal's job and dies when the window closes (Windows Terminal and others), and over
+# SSH it would land outside the desktop. A one-time task runs it in the signed-in
+# desktop session, on its own. (The Run key starts it at later logins.)
+$started = $false
+try {
+    $tr = 'wscript.exe "' + $vbs + '"'
+    schtasks /Create /TN 'Edgeflow Start' /TR $tr /SC ONCE /ST 00:00 /SD 2000/01/01 /IT /F 2>$null | Out-Null
+    if ($LASTEXITCODE -eq 0) {
+        schtasks /Run /TN 'Edgeflow Start' 2>$null | Out-Null
+        $started = ($LASTEXITCODE -eq 0)
+        Start-Sleep -Seconds 2
+        schtasks /Delete /TN 'Edgeflow Start' /F 2>$null | Out-Null
+    }
+} catch { }
+if (-not $started) { Start-Process wscript.exe -ArgumentList "`"$vbs`"" }
 for ($i = 0; $i -lt 90; $i++) {
     # Deskflow writes "connected to server" only at debug level; at info it's the TLS line
     if ((Test-Path $logWin) -and (Select-String -Path $logWin -Pattern 'connected to (server|secure socket)' -Quiet)) {

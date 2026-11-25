@@ -13,6 +13,7 @@ Built on [Deskflow](https://github.com/deskflow/deskflow); Edgeflow adds the par
 - **Mac 按鍵習慣 / Mac key habits** — ⌘ acts as Ctrl, Caps Lock switches 中/英, ⌘⇧3/4/5 take screenshots on the other computer.
 - **剪貼簿 / Clipboard** — text and images both ways; Mac screenshots go straight to the clipboard.
 - **只在區網 / LAN only** — the computers talk directly over the local network, encrypted.
+- **每個網路各自記住 / Per-network computers** — computers are remembered with the network they're on; move to another network and only that network's computers show up and get linked, the rest come back when you return.
 
 ## Download
 

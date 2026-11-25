@@ -7,7 +7,10 @@ import Foundation
 import SystemConfiguration
 
 enum Env {
-    static let version = "1.2.2"
+    static let version = "1.3.0"
+    /// Version of the helper scripts the Mac hands out (VERSION in edgeflow-helper.py/.ps1).
+    /// Separate from the app's, so an app-only release doesn't ask to update the helpers.
+    static let helperVersion = "1.2.2"
     static let home = FileManager.default.homeDirectoryForCurrentUser
     static let dfDir = home.appendingPathComponent("Library/Deskflow")
     static let fxDir = dfDir.appendingPathComponent("fx")
@@ -138,11 +141,37 @@ extension String {
 
 enum Net {
     /// IPv4 of the active Wi-Fi/Ethernet interface (en0, en1…), skipping link-local and VPN tunnels.
-    static func lanIPv4() -> String? {
+    static func lanIPv4() -> String? { lanInterface()?.ip }
+
+    /// The network the Mac is on, told apart by its router's hardware address (the Wi-Fi name
+    /// would need Location permission). `id` is nil when the router's address can't be read.
+    static func network() -> (router: String, id: String?)? {
+        guard let ifc = lanInterface() else { return nil }
+        var router = sh("/usr/sbin/ipconfig", ["getoption", ifc.name, "router"], timeout: 2).out
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if router.split(separator: ".").count != 4 {   // set up by hand, not DHCP
+            let r = sh("/sbin/route", ["-n", "get", "-ifscope", ifc.name, "default"], timeout: 2).out
+            router = r.split(separator: "\n").first { $0.contains("gateway:") }
+                .map { $0.split(separator: ":").last.map(String.init) ?? "" }?.trimmingCharacters(in: .whitespaces) ?? ""
+        }
+        guard router.split(separator: ".").count == 4 else { return nil }
+        func lookup() -> String? {
+            let out = sh("/usr/sbin/arp", ["-n", router], timeout: 2).out
+            guard let at = out.range(of: " at ") else { return nil }
+            let parts = out[at.upperBound...].split(separator: " ").first?.split(separator: ":") ?? []
+            guard parts.count == 6, parts.allSatisfy({ UInt8($0, radix: 16) != nil }) else { return nil }
+            return parts.map { $0.count == 1 ? "0\($0)" : String($0) }.joined(separator: ":").lowercased()
+        }
+        if let id = lookup() { return (router, id) }
+        _ = sh("/sbin/ping", ["-c", "1", "-t", "1", router], timeout: 2)   // fills the ARP table
+        return (router, lookup())
+    }
+
+    static func lanInterface() -> (name: String, ip: String)? {
         var ifaddr: UnsafeMutablePointer<ifaddrs>?
         guard getifaddrs(&ifaddr) == 0, let first = ifaddr else { return nil }
         defer { freeifaddrs(ifaddr) }
-        var best: String?
+        var best: (name: String, ip: String)?
         for p in sequence(first: first, next: { $0.pointee.ifa_next }) {
             let a = p.pointee
             guard let sa = a.ifa_addr, sa.pointee.sa_family == UInt8(AF_INET) else { continue }
@@ -152,8 +181,8 @@ enum Net {
             getnameinfo(sa, socklen_t(sa.pointee.sa_len), &host, socklen_t(host.count), nil, 0, NI_NUMERICHOST)
             let ip = String(cString: host)
             if ip.hasPrefix("169.254.") { continue }
-            if name == "en0" { return ip }
-            best = best ?? ip
+            if name == "en0" { return (name, ip) }
+            best = best ?? (name, ip)
         }
         return best
     }
